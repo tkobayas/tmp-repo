@@ -54,6 +54,7 @@
 - 宣言的にルールを記述する
     - Excel スプレッドシートなど複数のフォーマットで記述可能
 - クラウドネイティブにも対応(Kogito)
+- Red Hat Decision Manager のアップストリーム
 					</script>
 				</section>
 
@@ -74,15 +75,13 @@
 				<section data-markdown>
 					<script type="text/template">
 ### やってみよう
-- DRL
-
 ```
 rule "高額商品"
     when
         $p : Person( age >= 12 )
         $o : Order( consumer == $p, itemPrice > 100000 )
     then
-        System.out.println( $p.getName() + "さん、 " + $o.toString() + " の注文をご確認ください");
+        System.out.println( $p.getName() + "さん、 " + $o + " の注文をご確認ください");
 end
 
 rule "高額商品 子ども"
@@ -90,11 +89,22 @@ rule "高額商品 子ども"
         $p : Person( age < 12 )
         $o : Order( consumer == $p, itemPrice > 5000 )
     then
-        System.out.println( $p.getName() + "さん、、 " + $o.toString() + " の注文を保護者とご確認ください");
+        System.out.println( $p.getName() + "さん、、 " + $o + " の注文を保護者とご確認ください");
 end
 ```
 					</script>
 				</section>
+
+				<section data-markdown>
+					<script type="text/template">
+### DRL
+- when に条件、then にアクション(Java)を書く
+- ルールは並列に並べるだけ
+- ksession.insert() で ファクト(POJO) をインプット
+- ksession.fireAllRules() でルール実行
+					</script>
+				</section>
+
 
 				<section data-markdown>
 					<script type="text/template">
@@ -113,68 +123,104 @@ end
 				</section>
 
 
-<!--
-				<section>
-<img data-src="201912-Drools/1280px-Rete.svg.png">
-					</script>
-				</section>
--->
-
 				<section data-markdown>
 					<script type="text/template">
-### Process Execution
-#### Key breakpoints:
-- NodeInstanceImpl.trigger()
-    - <small>Super class of various Node instance classes. A good start point to go through Nodes in process execution. Each node specific logic is implemented in internalTrigger().</small>
-- OptimisticLockRetryInterceptor.internalExecute()
-    - <small>Sometimes "retry" confuses your analysis. Check if this interceptor affects or not. Enable TRACE logging</small>
+### デシジョンテーブル
+- 上段にルールのテンプレートを書き、セルで値を埋めていく
+    - プログラマとビジネスアナリストの分業が容易
+- スプレッドシートの1行が1ルール(DRL)に変換される
 					</script>
 				</section>
 
 				<section data-markdown>
 					<script type="text/template">
-### Task Service
-#### Key breakpoints:
-- LocalHTWorkItemHandler.executeWorkItem()
-    - <small>When entering a HumanTask Node, this WorkItemHandler creates "Task" with all required information including PeopleAssignments</small>
-- MVELLifeCycleManager.taskOperation()
-    - <small>Task operations are finally handled in this method. Note that Task life cycle is difined in operations-dsl.mvel</small>
-- ExternalTaskEventListener.processTaskState()
-    - <small>When a Task is completed, this class resumes process execution</small>
+### 推論
+```
+rule "春のキャンペーン"
+    when
+        $o : Order(consumer.memberCreatedAt >= "2019-04-01" && consumer.memberCreatedAt <=  "2019-04-30")
+    then
+        System.out.println("実行 : " + kcontext.getRule().getName());
+        $o.setExtraPoint($o.getExtraPoint() + 2000);
+        update($o);
+end
+
+rule "高額商品キャンペーン"
+    when
+        $o : Order(itemPrice > 100000)
+    then
+        System.out.println("実行 : " + kcontext.getRule().getName());
+        $o.setExtraPoint($o.getExtraPoint() + 4000);
+        update($o);
+end
+
+rule "大量ポイント獲得オーダー"
+    when
+        $o : Order(extraPoint > 5000)
+    then
+        System.out.println("実行 : " + kcontext.getRule().getName());
+        $o.setSpecialPointOrder(true);
+end
+```
 					</script>
 				</section>
 
 				<section data-markdown>
 					<script type="text/template">
-### Async Jobs / Executor
-#### Key breakpoints:
-- AsyncEventNodeInstance.internalTrigger()
-    - <small>If Task propery "Is Async" ("customAsync") is 'true', AsyncEventNodeInstance is created. It schedules AsyncSignalEventCommand for KieExecutorMDB to run immediately but asynchronously.</small>
-- KieExecutorMDB/JmsAvailableJobsExecutor.onMessage()
-    - <small>Main executor which processes async jobs in kie-server</small>
-- LoadAndScheduleRequestsTask.run()
-    - <small>Fallback mechanism when JmsAvailableJobsExecutor misses to process a job (e.g. fail-over). The job is eventually executed by AvailableJobsExecutor.executeJob()</small>
-- [BPMS 6] PollExecutorBean.executeJob()
-    - <small>In BPM Suite 6, PollExecutorBean (Stateless EJB) has this responsibility. It polls frequently so tends to cause database issues</small>
+### 推論
+- ルールの then でファクトを insert や update 出来る
+- 変更をもとにルールが再評価される
+    - 変更されたプロパティが影響するルールのみ
+- やりすぎ注意
+					</script>
+				</section>
+
+
+				<section data-markdown>
+					<script type="text/template">
+### kjar
+- ルールやPOJOをまとめて jar にする 
+- kie-maven-plugin
+- Maven リポジトリから取得してルール実行
+					</script>
+				</section>
+
+
+				<section data-markdown>
+					<script type="text/template">
+### ワークベンチ(decision-central)
+- GUI でルール、ファクト、テストシナリオなどを作成 
+- リソースは git で管理
+- kie-server (後述) 管理
 					</script>
 				</section>
 
 				<section data-markdown>
 					<script type="text/template">
-### Timer / Quartz Scheduler
-#### Key breakpoints:
-- EJBTimerScheduler.executeTimerJob()
-    - <small>Default Scheduler for kie-server. For non-cluster environment</small>
-- QuartzSchedulerService.scheduleJob()
-    - <small>For cluster environment</small>
-- GlobalJpaTimerJobInstance.call() -> TimerManager$ProcessJob.execute()
-    - <small>Executes Timer job using RuntimeManager. Common to EJBTimerScheduler and QuartzScheduler</small>
-- QuartzSchedulerThread.run()
-    - <small>Main logic of Quartz. Loop and pick up a Timer (= Trigger). Then, pass it to JobRunShell.</small>
+### kie-server
+- ルール実行サーバー 
+- REST で insert, fireAllRules
+- Web アプリケーションとルールエンジンを分離
 					</script>
 				</section>
 
+				<section data-markdown>
+					<script type="text/template">
+### Kogito
+- Drools、jBPM をクラウドネイティブに
+- 起動が速い、メモリ消費が少ない
+- [kogito.kie.org](https://kogito.kie.org/)
+					</script>
+				</section>
 
+				<section data-markdown>
+					<script type="text/template">
+### リソース
+- [drools.org](https://www.drools.org/)
+- [Drools ブログ](https://tokobayashi.hatenablog.com/archive/category/Drools%E3%83%96%E3%83%AD%E3%82%B0)
+- [Red Hat Decision Manager](https://www.redhat.com/ja/technologies/jboss-middleware/decision-manager)
+					</script>
+				</section>
 
 
 				<section data-markdown>
